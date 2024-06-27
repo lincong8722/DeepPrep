@@ -23,6 +23,7 @@ import os
 import argparse
 from pathlib import Path
 from bids import BIDSLayout
+import json
 
 from fmriprep.workflows.bold.confounds import init_bold_confs_wf
 from nipype.pipeline import engine as pe
@@ -96,6 +97,24 @@ def bold_confounds_v2(bold_preprocess_dir, bold, bold_mask, movpar_file, rmsd_fi
     workflow.run()
 
 
+def compile_regressors(bold_path: Path, TR, aseg_brainmask_bin, output_file):
+    from filters.filters import bandpass_nifti
+    from bold_confounds_part1 import regressors_PCA
+    import pandas as pd
+
+    # Generate PCA regressors of bpss nifti.
+    bandpass_bold = bandpass_nifti(bold_path, TR)
+    e_comp_cor = regressors_PCA(bandpass_bold, str(aseg_brainmask_bin))
+
+    label_header = ['e_comp_cor_00', 'e_comp_cor_01', 'e_comp_cor_02', 'e_comp_cor_03', 'e_comp_cor_04',
+                    'e_comp_cor_05', 'e_comp_cor_06', 'e_comp_cor_07', 'e_comp_cor_08', 'e_comp_cor_09']
+
+    df = pd.read_csv(output_file, sep='\t')
+    confounds = pd.DataFrame(e_comp_cor, columns=label_header)
+    df = pd.concat([df, confounds], axis=1)
+    df.to_csv(output_file, index=False, sep='\t')
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(
@@ -154,5 +173,16 @@ if __name__ == '__main__':
     confounds_tsv = boldref2anat_xfm.parent / f'{args.bold_id}_desc-confounds_timeseries.tsv'
     bold_confounds_v2(args.bold_preprocess_dir, boldresampled, bold_mask, movpar_file, rmsd_file, str(boldref2anat_xfm), skip_vols,
                       t1w_tpms, t1w_mask, source_file)
+
+    from bold_confounds_part1 import get_space_t1w_bold
+
+    bold_space_t1w_file, boldref_space_t1w_file = get_space_t1w_bold(subject_id=args.subject_id,
+                                                                     bids_preproc=args.bold_preprocess_dir,
+                                                                     bold_orig_file=source_file)
+    bold_space_t1w_json = Path(bold_space_t1w_file).parent / Path(bold_space_t1w_file).name.replace('.nii.gz', '.json')
+    with open(bold_space_t1w_json) as jf:
+        TR = json.load(jf)['RepetitionTime']
+    compile_regressors(boldresampled, TR, bold_mask, confounds_tsv)
     assert confounds_tsv.exists()
+
 
