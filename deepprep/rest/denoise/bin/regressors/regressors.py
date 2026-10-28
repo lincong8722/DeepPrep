@@ -3,7 +3,7 @@ import pandas as pd
 import nibabel as nib
 
 
-def glm_nifti(regressor_txt, bpss_path, regression_path, regressor_path):
+def glm_nifti(regressor_txt, bpss_path, regression_path, regressor_path, skip_frame):
     '''
     Compute the residuals of the voxel information in a NIFTI file.
 
@@ -25,14 +25,24 @@ def glm_nifti(regressor_txt, bpss_path, regression_path, regressor_path):
     df.fillna(0, inplace=True)
     regressors_to_read = [regressor for regressor in regressors if regressor in df.columns]
     regressors = np.asarray(df[regressors_to_read], dtype=np.float32)
+    regressors = regressors[skip_frame:]
 
     # Read NIFTI values.
     nifti_img = nib.load(bpss_path)
     nifti_data = nifti_img.get_fdata()
+    # Remove the same initial frames as confounds
+    nifti_data = nifti_data[:, :, :, skip_frame:]
+
     nx, ny, nz, nv = nifti_data.shape
     nifti_data = np.reshape(nifti_data, (nx * ny * nz, nv)).T
 
     # Assemble linear system and solve it.
+    if regressors.shape[0] != nifti_data.shape[0]:
+        raise ValueError(
+            f"Time dimension mismatch: "
+            f"confounds={regressors.shape[0]}, "
+            f"BOLD={nifti_data.shape[0]}"
+        )
     A = np.hstack((regressors, np.ones((regressors.shape[0], 1))))
     x = np.linalg.lstsq(A, nifti_data, rcond=-1)[0]
 

@@ -6,6 +6,8 @@
 import streamlit as st
 import subprocess
 import os
+import re
+import shlex
 
 st.markdown(f'# ⚙️Postprocessing of BOLD')
 st.markdown(
@@ -121,15 +123,119 @@ if "fsnative" in spaces:
     else:
         deepprep_cmd += f' --subjects_dir {subjects_dir}'
 
-bold_skip_frame = st.text_input("skip n frames of BOLD data", value="2",
-                                help="skip n frames of BOLD fMRI; the default is `2`.")
-if not bold_skip_frame:
-    deepprep_cmd += f' --skip_frame 2'
+# bold_skip_frame = st.text_input("skip n frames of BOLD data", value="2",
+#                                 help="skip n frames of BOLD fMRI; the default is `2`.")
+# if not bold_skip_frame:
+#     deepprep_cmd += f' --skip_frame 2'
+# else:
+#     deepprep_cmd += f' --skip_frame {bold_skip_frame}'
+# -----------------------------------------------------------------------------
+# Resolve skip_frame using the same priority as postprocess.sh:
+#   explicitly set --skip_frame > preprocessing --QC_dir > postprocess.config.
+# -----------------------------------------------------------------------------
+def read_integer_config(config_path, param_name):
+    """Read an active integer parameter assignment from a Nextflow config."""
+    pattern = re.compile(
+        rf"^\s*{re.escape(param_name)}\s*=\s*(\d+)(?=\s*(?://|#|;|$))"
+    )
+    with open(config_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            match = pattern.match(line)
+            if match:
+                return int(match.group(1))
+    return None
+
+
+preprocess_qc_dir = st.text_input(
+    "Preprocessing QC Directory (optional)",
+    value="",
+    placeholder="/path/to/preprocessing/QC",
+    help=(
+        "If provided without a manual skip_frame, postprocess.sh will read "
+        "bold_skip_frame from QC_dir/nextflow.run.config. "
+        "This is the *preprocessing* QC directory, not the new output QC directory."
+    ),
+).strip()
+
+if preprocess_qc_dir:
+    if not os.path.isabs(preprocess_qc_dir):
+        st.error("The Preprocessing QC Directory must be an absolute path.")
+        commond_error = True
+    else:
+        deepprep_cmd += f' --QC_dir {shlex.quote(preprocess_qc_dir)}'
+
+manual_skip_frame = st.checkbox(
+    "Set skip_frame manually (highest priority)",
+    value=False,
+    help=(
+        "Check to explicitly pass --skip_frame, including 0. "
+        "Otherwise, the launcher reads QC_dir when supplied or falls back "
+        "to postprocess.config."
+    ),
+)
+
+if manual_skip_frame:
+    bold_skip_frame = st.number_input(
+        "skip n frames of BOLD data",
+        min_value=0,
+        value=0,
+        step=1,
+        help="User-provided skip_frame overrides both QC_dir and postprocess.config."
+    )
+    deepprep_cmd += f' --skip_frame {int(bold_skip_frame)}'
+    st.info(
+        f"Effective skip_frame: **{int(bold_skip_frame)}** "
+        "(source: manual --skip_frame; overrides QC_dir if provided)."
+    )
+elif preprocess_qc_dir and os.path.isabs(preprocess_qc_dir):
+    candidates = [
+        os.path.join(preprocess_qc_dir, 'nextflow.run.config'),
+        os.path.join(preprocess_qc_dir, 'nextflow', 'run.config'),
+    ]
+    qc_config = next((path for path in candidates if os.path.isfile(path)), None)
+    if qc_config is None:
+        st.error(
+            "Cannot find nextflow.run.config under the preprocessing QC directory. "
+            "Expected QC_dir/nextflow.run.config "
+            "(or QC_dir/nextflow/run.config)."
+        )
+        commond_error = True
+    else:
+        try:
+            qc_skip_frame = read_integer_config(qc_config, 'bold_skip_frame')
+        except OSError as exc:
+            st.error(f"Cannot read preprocessing QC config: {exc}")
+            commond_error = True
+        else:
+            if qc_skip_frame is None:
+                st.error(f"Cannot find valid bold_skip_frame in: {qc_config}")
+                commond_error = True
+            else:
+                st.info(
+                    f"Effective skip_frame: **{qc_skip_frame}** "
+                    f"(source: {qc_config}, bold_skip_frame)."
+                )
 else:
-    deepprep_cmd += f' --skip_frame {bold_skip_frame}'
+    # No --skip_frame is forwarded. Let postprocess.sh/Nextflow use the default.
+    default_config = '/opt/DeepPrep/deepprep/rest/denoise/postprocess.config'
+    try:
+        default_skip_frame = (
+            read_integer_config(default_config, 'skip_frame')
+            if os.path.isfile(default_config) else None
+        )
+    except OSError:
+        default_skip_frame = None
+    if default_skip_frame is None:
+        st.info("Effective skip_frame: postprocess.config default (no override passed).")
+    else:
+        st.info(
+            f"Effective skip_frame: **{default_skip_frame}** "
+            "(source: postprocess.config, params.skip_frame)."
+        )
+
 
 bold_fwhm = st.text_input("fwhm", value="6", help="smooth by fwhm mm; the default is `6`.")
-if not bold_skip_frame:
+if not bold_fwhm:
     deepprep_cmd += f' --surface_fwhm 6 --volume_fwhm 6'
 else:
     deepprep_cmd += f' --surface_fwhm {bold_fwhm} --volume_fwhm {bold_fwhm}'

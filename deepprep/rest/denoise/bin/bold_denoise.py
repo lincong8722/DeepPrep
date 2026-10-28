@@ -156,7 +156,7 @@ if __name__ == '__main__':
             json.dump({'RepetitionTime': TR, 'bandpass': band}, f, indent=4)
         print(f'>>> {bandpass_json_file}')
 
-        glm_nifti(confounds_index_file, bandpass_file, regression_file, confounds_file)
+        glm_nifti(confounds_index_file, bandpass_file, regression_file, confounds_file, skip_frame=int(args.skip_frame or 0))
         assert os.path.exists(regression_file)
         print(f'>>> {regression_file}')
         with open(confounds_index_file, 'r') as f:
@@ -194,14 +194,14 @@ if __name__ == '__main__':
         smooth_file = os.path.join(output_dir, bold_preproc_file.filename.replace('desc-preproc', 'desc-fwhm'))
         smooth_json_file = smooth_file.replace('.nii.gz', '.json')
 
-        bandpass_nifti(bold_preproc_file, bandpass_file, TR)
+        bandpass_nifti(bold_preproc_file, bandpass_file, TR, int(args.skip_frame), band)
         assert os.path.exists(bandpass_file)
         print(f'>>> {bandpass_file}')
         with open(bandpass_json_file, 'w') as f:
             json.dump({'RepetitionTime': TR, 'bandpass': band}, f, indent=4)
         print(f'>>> {bandpass_json_file}')
 
-        glm_nifti(confounds_index_file, bandpass_file, regression_file, confounds_file)
+        glm_nifti(confounds_index_file, bandpass_file, regression_file, confounds_file, skip_frame=int(args.skip_frame or 0))
         assert os.path.exists(regression_file)
         print(f'>>> {regression_file}')
         with open(confounds_index_file, 'r') as f:
